@@ -157,51 +157,105 @@ def generate_invoice_pdf(data: dict) -> bytes:
         
     ]
 
-    # --- Seller（左）: 請求先列の手前1文字で折り返す ---
+           # ---------- Header blocks (2カラム：左=Seller / 右=Meta) ----------
+    # ベゼルつまみ
+    y_top = height - margin_y - 12 * mm
+    col_gap = 6 * mm
+    col_split_x = margin_x + 90 * mm   # ← 左と右の境界（必要なら90→95〜100mmへ）
+    meta_x = col_split_x + col_gap
+
+    # 右上ロゴ（任意。static/logo.png があれば右上に表示）
+    logo_bottom_y = y_top
+    try:
+        logo_path = os.path.join("static", "logo.png")
+        if os.path.exists(logo_path):
+            logo_w = 24 * mm
+            logo_h = 24 * mm
+            logo_x = width - margin_x - logo_w
+            logo_y = height - margin_y - logo_h
+            c.drawImage(logo_path, logo_x, logo_y, width=logo_w, height=logo_h,
+                        preserveAspectRatio=True, mask='auto')
+            logo_bottom_y = logo_y
+    except Exception:
+        pass
+
+    # 見出し（同一行に左右で表示）
     c.setFont(base_font, 11)
-    c.drawString(margin_x, y, "請求元 / From")
-    y -= 16
-    one_char_w = pdfmetrics.stringWidth("あ", base_font, text_font_size)  # 全角1文字幅
-    seller_max_w = max(40 * mm, (x2 - margin_x) - one_char_w)
+    c.drawString(margin_x, y_top, "請求元 / From")
+    c.drawString(meta_x,    y_top, "請求書番号 / Invoice No.")
+
+    # 左列：請求元（右カラム境界の1文字手前で必ず折返し）
+    y_left = y_top - 16
+    one_char_w = pdfmetrics.stringWidth("あ", base_font, text_font_size)  # 全角1文字分
+    seller_max_w = max(40 * mm, (col_split_x - margin_x) - one_char_w)
+
+    seller_lines = [
+        data.get("seller_name", ""),
+        data.get("seller_address", ""),
+        data.get("seller_phone", ""),
+        data.get("seller_email", ""),
+    ]
     for line in seller_lines:
         if line:
-            y = draw_wrapped(
-                c, line, margin_x, y,
+            y_left = draw_wrapped(
+                c, line, margin_x, y_left,
                 base_font, text_font_size,
-                max_width=seller_max_w,
-                line_height=12
+                max_width=seller_max_w, line_height=12
             )
 
-    # --- Buyer（中） ---
+    # 右列：メタ（ラベル → 次の行に値 の縦積み）
+    y_right = y_top - 16
+    meta_max_w = (width - margin_x) - meta_x
+
+    # 先頭は請求書番号の値を出す（見出しは上に出ているため）
+    invoice_no = data.get("invoice_no", "")
+    if invoice_no:
+        c.setFont(base_font, 10)
+        c.drawString(meta_x, y_right, "請求書番号 / Invoice No.")
+        y_right -= 12
+        for ln in wrap_lines(invoice_no, base_font, 10, meta_max_w):
+            c.drawString(meta_x, y_right, ln)
+            y_right -= 14
+        y_right -= 2  # 少しだけ余白
+
+    # 残りのメタ群
+    c.setFont(base_font, 10)
+    meta_fields = [
+        ("請求日 / Date",        data.get("date", "")),
+        ("支払期日 / Due Date",  data.get("due_date", "")),
+        ("通貨 / Currency",      data.get("currency", "JPY")),
+        ("税率 / Tax Rate",      f"{float(data.get('tax_rate') or 0)*100:.0f}%"),
+    ]
+    for label, val in meta_fields:
+        c.drawString(meta_x, y_right, label)
+        y_right -= 12
+        for ln in wrap_lines(val, base_font, 10, meta_max_w):
+            c.drawString(meta_x, y_right, ln)
+            y_right -= 14
+
+    # 請求先 / Bill To は左右ブロックの下に配置（※旧コードの“上段中列”を廃止）
     c.setFont(base_font, 11)
-    c.drawString(x2, y2, "請求先 / Bill To")
-    y2 -= 16
+    y_bt = min(y_left, y_right, logo_bottom_y) - 10 * mm
+    c.drawString(margin_x, y_bt, "請求先 / Bill To")
+    y_bt -= 16
+    # 左右ブロックに合わせて、請求先は左側幅いっぱいで折返し
+    buyer_max_w = (col_split_x - margin_x) - one_char_w
+    buyer_lines = [
+        data.get("buyer_name", ""),
+        data.get("buyer_address", ""),
+        data.get("buyer_phone", ""),
+        data.get("buyer_email", ""),
+    ]
     for line in buyer_lines:
         if line:
-            y2 = draw_wrapped(
-                c, line, x2, y2,
+            y_bt = draw_wrapped(
+                c, line, margin_x, y_bt,
                 base_font, text_font_size,
-                max_width=buyer_max_w,
-                line_height=12
+                max_width=buyer_max_w, line_height=12
             )
 
-    # --- Meta（右）: ラベル→値 の縦並び、隣接防止は buyer_max_w + gap + 1文字 ---
-    gap = 5 * mm
-    meta_label_x_default = width - margin_x - 45 * mm
-    meta_x = max(meta_label_x_default, x2 + buyer_max_w + gap + one_char_w)
-    meta_y = height - margin_y - 12 * mm
-
-    c.setFont(base_font, 10)
-    meta_label_leading = 12
-    meta_value_leading = 16
-    for label, val in meta_right:
-        c.drawString(meta_x, meta_y, str(label))
-        meta_y -= meta_label_leading
-        c.drawString(meta_x, meta_y, str(val))
-        meta_y -= meta_value_leading
-
-    # 明細セクションの開始位置（3者のいちばん下に合わせる）
-    table_top = min(y, y2, meta_y) - 10 * mm
+    # 明細開始位置：上の3者（Seller / Meta / BillTo）の最下点に合わせる
+    table_top = min(y_bt, y_left, y_right) - 8 * mm
     c.setFont(base_font, 11)
     c.drawString(margin_x, table_top, "明細 / Items")
 
@@ -315,16 +369,18 @@ def generate_invoice_pdf(data: dict) -> bytes:
     c.drawRightString(totals_x_label, row_y, "合計 / Total")
     c.drawRightString(totals_x_val, row_y, money(total_sub + total_tax))
 
-    # 備考
+       # 備考
     row_y -= 22
     c.setFont(base_font, 9)
-    c.drawString(margin_x, row_y, data.get("note", ""))
-
-    c.showPage()
-    c.save()
-    pdf_bytes = buf.getvalue()
-    buf.close()
-    return pdf_bytes
+    note_text = data.get("note", "")
+    note_max_w = (width - 2 * margin_x)
+    for ln in wrap_lines(note_text, base_font, 9, note_max_w):
+        if row_y < 24 * mm:
+            c.showPage()
+            c.setFont(base_font, 9)
+            row_y = height - margin_y
+        c.drawString(margin_x, row_y, ln)
+        row_y -= 12
 
 # ---------- Flask views ----------
 INDEX_HTML = """
