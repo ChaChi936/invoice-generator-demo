@@ -207,16 +207,14 @@ def generate_invoice_pdf(data: dict) -> bytes:
     y_right = y_top - 16
     meta_max_w = (width - margin_x) - meta_x
 
-    # 先頭は請求書番号の値を出す（見出しは上に出ているため）
-    invoice_no = data.get("invoice_no", "")
-    if invoice_no:
-        c.setFont(base_font, 10)
-        c.drawString(meta_x, y_right, "請求書番号 / Invoice No.")
-        y_right -= 12
-        for ln in wrap_lines(invoice_no, base_font, 10, meta_max_w):
-            c.drawString(meta_x, y_right, ln)
-            y_right -= 14
-        y_right -= 2  # 少しだけ余白
+    # ★ 先頭は請求書番号の値だけを出す（ラベルは上に出しているので不要）
+invoice_no = data.get("invoice_no", "")
+if invoice_no:
+    c.setFont(base_font, 10)
+    for ln in wrap_lines(invoice_no, base_font, 10, meta_max_w):
+        c.drawString(meta_x, y_right, ln)
+        y_right -= 14
+    y_right -= 2  # 少し余白
 
     # 残りのメタ群
     c.setFont(base_font, 10)
