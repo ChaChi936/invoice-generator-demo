@@ -382,6 +382,15 @@ def generate_invoice_pdf(data: dict) -> bytes:
         c.drawString(margin_x, row_y, ln)
         row_y -= 12
 
+    try:
+         c.showPage()
+    except Exception:
+        pass
+    c.save()
+    pdf_bytes = buf.getvalue()
+    buf.close()
+    return pdf_bytes
+
 # ---------- Flask views ----------
 INDEX_HTML = """
 <!doctype html>
